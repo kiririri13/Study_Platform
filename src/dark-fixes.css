@@ -1,0 +1,45 @@
+body[data-theme="dark"] .student-work-stats span,
+body[data-theme="dark"] .group-members span,
+body[data-theme="dark"] .badge,
+body[data-theme="dark"] .nav-badge,
+body[data-theme="dark"] .score-summary b,
+body[data-theme="dark"] .conducted-mark {
+  color: #1e293b;
+  background: #f8fafc;
+  border-color: #cbd5e1;
+}
+
+body[data-theme="dark"] .badge.new,
+body[data-theme="dark"] .badge.assigned {
+  color: #123b7a;
+  background: #dbeafe;
+  border-color: #93c5fd;
+}
+
+body[data-theme="dark"] .badge.submitted,
+body[data-theme="dark"] .badge.reviewing,
+body[data-theme="dark"] .badge.revision {
+  color: #713f12;
+  background: #fef3c7;
+  border-color: #fbbf24;
+}
+
+body[data-theme="dark"] .badge.checked {
+  color: #14532d;
+  background: #dcfce7;
+  border-color: #86efac;
+}
+
+body[data-theme="dark"] .badge.overdue {
+  color: #7f1d1d;
+  background: #fee2e2;
+  border-color: #fca5a5;
+}
+
+body[data-theme="dark"] .sidebar-toggle,
+body[data-theme="dark"] .close-side,
+body[data-theme="dark"] .calendar-mini-icon {
+  color: #e7edf8;
+  background: #172033;
+  border-color: #475569;
+}

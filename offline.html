@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#3B82F6" />
+    <title>Нет подключения</title>
+    <style>
+      :root {
+        color: #172033;
+        background: #f5f8ff;
+        font-family: Inter, Arial, sans-serif;
+      }
+
+      body {
+        min-height: 100vh;
+        margin: 0;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+      }
+
+      main {
+        width: min(460px, 100%);
+        padding: 28px;
+        border: 1px solid #dbe8ff;
+        border-radius: 14px;
+        background: #ffffff;
+        box-shadow: 0 18px 50px rgba(18, 103, 243, 0.12);
+      }
+
+      h1 {
+        margin: 0 0 10px;
+        font-size: 28px;
+        line-height: 1.1;
+      }
+
+      p {
+        margin: 0 0 18px;
+        color: #60708d;
+        line-height: 1.5;
+      }
+
+      button {
+        width: 100%;
+        min-height: 48px;
+        border: 0;
+        border-radius: 8px;
+        color: #ffffff;
+        background: #1267f3;
+        font: inherit;
+        font-weight: 800;
+        cursor: pointer;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Нет подключения</h1>
+      <p>Платформа открыта в офлайн-режиме. Проверь интернет и обнови страницу, чтобы загрузить свежие занятия и задания.</p>
+      <button type="button" onclick="location.reload()">Обновить</button>
+    </main>
+  </body>
+</html>
