@@ -1,10 +1,10 @@
-const CACHE_VERSION = "study-platform-pwa-v2";
+const CACHE_VERSION = "study-platform-pwa-v3";
 const APP_SHELL = [
   "/",
   "/index.html",
   "/offline.html",
   "/manifest.webmanifest",
-  "/src/app.js?v=20260810-pwa-ready",
+  "/src/app.js?v=20260812-teachers-push",
   "/src/styles.css?v=20260810-assignments-title",
   "/src/dark-fixes.css?v=20260727-dark-pills",
   "/assets/icons/icon-192.png",
