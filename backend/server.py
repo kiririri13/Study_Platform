@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import hashlib
+import html
 import hmac
 import json
 import mimetypes
@@ -15,6 +16,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlparse
+from urllib.request import Request, urlopen
 
 try:
     import psycopg
@@ -61,6 +63,10 @@ SMTP_USE_TLS = os.environ.get("SMTP_USE_TLS", "true").lower() not in ("0", "fals
 SMTP_USE_SSL = os.environ.get("SMTP_USE_SSL", "true" if SMTP_PORT == 465 else "false").lower() not in ("0", "false", "no", "off")
 SMTP_TIMEOUT = int(os.environ.get("SMTP_TIMEOUT", "30") or 30)
 EMAIL_NOTIFICATIONS_ENABLED = os.environ.get("EMAIL_NOTIFICATIONS_ENABLED", "true").lower() not in ("0", "false", "no", "off")
+EMAIL_PROVIDER = os.environ.get("EMAIL_PROVIDER", "smtp").strip().lower()
+BREVO_API_KEY = os.environ.get("BREVO_API_KEY", "").strip()
+BREVO_API_URL = os.environ.get("BREVO_API_URL", "https://api.brevo.com/v3/smtp/email").strip()
+BREVO_SENDER_NAME = os.environ.get("BREVO_SENDER_NAME", "Study Platform").strip()
 
 
 SCHEMA_SQL = """
@@ -598,14 +604,14 @@ def create_notification_once(conn, user_id: str, title: str, message: str, relat
 
 
 def queue_email_notification(user_id: str, title: str, message: str) -> None:
-    if not EMAIL_NOTIFICATIONS_ENABLED or not SMTP_HOST or not SMTP_FROM:
+    if not email_notifications_configured():
         return
     thread = threading.Thread(target=send_email_notification, args=(user_id, title, message), daemon=True)
     thread.start()
 
 
 def send_email_notification(user_id: str, title: str, message: str) -> None:
-    if not EMAIL_NOTIFICATIONS_ENABLED or not SMTP_HOST or not SMTP_FROM:
+    if not email_notifications_configured():
         return
     if psycopg is None:
         return
@@ -618,23 +624,73 @@ def send_email_notification(user_id: str, title: str, message: str) -> None:
     if not user or not user["email"]:
         return
     recipient_name = f"{user['first_name']} {user['last_name']}".strip()
+    if EMAIL_PROVIDER == "brevo":
+        send_email_via_brevo(user["email"], recipient_name, title, message)
+        return
+    send_email_via_smtp(user["email"], recipient_name, title, message)
+
+
+def email_notifications_configured() -> bool:
+    if not EMAIL_NOTIFICATIONS_ENABLED:
+        return False
+    if EMAIL_PROVIDER == "brevo":
+        return bool(BREVO_API_KEY and SMTP_FROM)
+    return bool(SMTP_HOST and SMTP_FROM)
+
+
+def build_email_text(recipient_name: str, title: str, message: str) -> str:
+    greeting = f"Здравствуйте, {recipient_name}!" if recipient_name else "Здравствуйте!"
+    return "\n".join(
+        [
+            greeting,
+            "",
+            title,
+            message,
+            "",
+            "Это письмо отправлено автоматически из Study Platform.",
+        ]
+    )
+
+
+def send_email_via_brevo(recipient_email: str, recipient_name: str, title: str, message: str) -> None:
+    text_content = build_email_text(recipient_name, title, message)
+    safe_title = html.escape(title)
+    html_message = "<br>".join(html.escape(line) for line in text_content.splitlines())
+    payload = {
+        "sender": {"name": BREVO_SENDER_NAME or SMTP_FROM, "email": SMTP_FROM},
+        "to": [{"email": recipient_email, "name": recipient_name or recipient_email}],
+        "subject": f"Study Platform: {title}",
+        "textContent": text_content,
+        "htmlContent": f"<h2>{safe_title}</h2><p>{html_message}</p>",
+    }
+    request = Request(
+        BREVO_API_URL,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "accept": "application/json",
+            "api-key": BREVO_API_KEY,
+            "content-type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=SMTP_TIMEOUT) as response:
+            if response.status >= 400:
+                body = response.read().decode("utf-8", errors="replace")
+                raise RuntimeError(f"HTTP {response.status}: {body}")
+    except Exception as exc:
+        print(
+            f"Email notification was not sent to {recipient_email} via Brevo API: {exc}",
+            file=sys.stderr,
+        )
+
+
+def send_email_via_smtp(recipient_email: str, recipient_name: str, title: str, message: str) -> None:
     email = EmailMessage()
     email["Subject"] = f"Study Platform: {title}"
     email["From"] = SMTP_FROM
-    email["To"] = user["email"]
-    greeting = f"Р—РґСЂР°РІСЃС‚РІСѓР№С‚Рµ, {recipient_name}!" if recipient_name else "Р—РґСЂР°РІСЃС‚РІСѓР№С‚Рµ!"
-    email.set_content(
-        "\n".join(
-            [
-                greeting,
-                "",
-                title,
-                message,
-                "",
-                "Р­С‚Рѕ РїРёСЃСЊРјРѕ РѕС‚РїСЂР°РІР»РµРЅРѕ Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРё РёР· Study Platform.",
-            ]
-        )
-    )
+    email["To"] = recipient_email
+    email.set_content(build_email_text(recipient_name, title, message))
     try:
         smtp_class = smtplib.SMTP_SSL if SMTP_USE_SSL else smtplib.SMTP
         with smtp_class(SMTP_HOST, SMTP_PORT, timeout=SMTP_TIMEOUT) as smtp:
@@ -645,7 +701,7 @@ def send_email_notification(user_id: str, title: str, message: str) -> None:
             smtp.send_message(email)
     except Exception as exc:
         print(
-            f"Email notification was not sent to {user['email']} via {SMTP_HOST}:{SMTP_PORT}: {exc}",
+            f"Email notification was not sent to {recipient_email} via {SMTP_HOST}:{SMTP_PORT}: {exc}",
             file=sys.stderr,
         )
 
