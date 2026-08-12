@@ -612,15 +612,14 @@
           <form id="login-form">
             <div class="field">
               <label>Email</label>
-              <input class="input" name="email" value="kirillsaitov44@gmail.com" autocomplete="email" />
+              <input class="input" name="email" autocomplete="email" />
             </div>
             <div class="field">
               <label>Пароль</label>
-              <input class="input" name="password" type="password" value="Teacher123!" autocomplete="current-password" />
+              <input class="input" name="password" type="password" autocomplete="current-password" />
             </div>
             <button class="btn" type="submit">${busy ? "Входим..." : "Войти"}</button>
           </form>
-          <p class="hint">Учитель: kirillsaitov44@gmail.com / Teacher123!<br />Ученик: saitovkiril@yandex.ru / Student123!<br />Родитель: parent1@example.com / Parent123!</p>
         </section>
       </main>
     `;
@@ -846,6 +845,7 @@
         <h2>Ученики</h2>
         <div class="row wrap">
           <button class="btn secondary" data-modal="group">Создать группу</button>
+          <button class="btn secondary" data-modal="teacher">Добавить учителя</button>
           <button class="btn" data-modal="student">Добавить ученика</button>
         </div>
       </div>
@@ -1782,6 +1782,19 @@
   }
 
   function renderModal() {
+    if (modal === "teacher") return modalShell("Добавить учителя", `
+      <form id="teacher-form" class="form-grid">
+        ${field("firstName", "Имя")}
+        ${field("lastName", "Фамилия")}
+        ${field("email", "Email", "email")}
+        <div class="field">
+          <label>Пароль учителя</label>
+          <input class="input" name="password" type="text" placeholder="Например: Teacher123!" required />
+        </div>
+        ${field("phone", "Телефон")}
+        <button class="btn wide" type="submit">Создать учителя</button>
+      </form>
+    `);
     if (modal === "student") return modalShell("Добавить ученика", `
       <form id="student-form" class="form-grid">
         ${field("firstName", "Имя")}
@@ -2216,6 +2229,17 @@
   }
 
   function bindForms() {
+    const teacherForm = document.querySelector("#teacher-form");
+    if (teacherForm) teacherForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const data = Object.fromEntries(new FormData(event.currentTarget));
+      run(async () => {
+        await api("/api/teachers", { method: "POST", body: JSON.stringify(data) });
+        modal = null;
+        await loadData();
+      });
+    });
+
     const studentForm = document.querySelector("#student-form");
     if (studentForm) studentForm.addEventListener("submit", (event) => {
       event.preventDefault();

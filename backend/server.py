@@ -948,6 +948,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self.get_students(conn, user)
                 if method == "POST" and path == "/api/students":
                     return self.create_student(conn, user)
+                if method == "POST" and path == "/api/teachers":
+                    return self.create_teacher(conn, user)
                 if method == "GET" and path == "/api/profile":
                     return self.get_profile(conn, user)
                 if method == "PATCH" and path == "/api/profile":
@@ -1012,6 +1014,40 @@ class Handler(BaseHTTPRequestHandler):
         if header.startswith("Bearer "):
             conn.execute("DELETE FROM sessions WHERE token = %s", (header.removeprefix("Bearer ").strip(),))
         self.send_json({"ok": True})
+
+    def create_teacher(self, conn, user: dict) -> None:
+        if user["role"] != "teacher":
+            self.send_error_json(HTTPStatus.FORBIDDEN, "Создавать учителей может только учитель.")
+            return
+        data = self.read_json()
+        email = data.get("email", "").strip().lower()
+        password = data.get("password", "").strip()
+        if not email:
+            self.send_error_json(HTTPStatus.BAD_REQUEST, "Email учителя обязателен.")
+            return
+        if not password:
+            self.send_error_json(HTTPStatus.BAD_REQUEST, "Пароль учителя обязателен.")
+            return
+        ts = now_iso()
+        teacher_id = new_id("u")
+        conn.execute(
+            """
+            INSERT INTO users (id, email, password_hash, role, first_name, last_name, phone, created_at, updated_at)
+            VALUES (%s, %s, %s, 'teacher', %s, %s, %s, %s, %s)
+            """,
+            (
+                teacher_id,
+                email,
+                hash_password(password),
+                data.get("firstName", "").strip(),
+                data.get("lastName", "").strip(),
+                data.get("phone", "").strip(),
+                ts,
+                ts,
+            ),
+        )
+        row = fetchone(conn, "SELECT * FROM users WHERE id = %s", (teacher_id,))
+        self.send_json({"teacher": user_payload(row)}, HTTPStatus.CREATED)
 
     def get_students(self, conn, user: dict) -> None:
         if user["role"] != "teacher":
