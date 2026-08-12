@@ -31,6 +31,11 @@
 
   async function enablePushNotifications({ askPermission = false } = {}) {
     if (!token) return;
+    if (isAndroidApp()) {
+      syncAndroidAuthToken();
+      pushState = { status: "android-app", message: "Уведомления приложения подключаются через Android." };
+      return;
+    }
     if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
       pushState = { status: "unsupported", message: "Это устройство не поддерживает push-уведомления." };
       return;
@@ -132,6 +137,10 @@
     } catch (err) {
       // Android bridge can be unavailable in a regular browser.
     }
+  }
+
+  function isAndroidApp() {
+    return Boolean(window.UrokroomAndroid && typeof window.UrokroomAndroid.syncAuthToken === "function");
   }
 
   async function bootstrap() {
@@ -756,20 +765,21 @@
   function renderNotificationSwitcher() {
     const status = pushState.status;
     const enabled = status === "enabled";
+    const androidApp = status === "android-app";
     const blocked = status === "blocked";
     const unsupported = status === "unsupported";
     const serverOff = status === "server-off";
     const checking = status === "checking";
     const message = pushState.message || (enabled ? "Уведомления включены." : "Разрешите уведомления, чтобы получать важные события.");
-    const buttonText = checking ? "Проверяем..." : enabled ? "Включены" : "Включить";
+    const buttonText = checking ? "Проверяем..." : enabled || androidApp ? "Готово" : "Включить";
     return `
-      <div class="push-switcher ${enabled ? "enabled" : ""} ${blocked || unsupported || serverOff ? "warning" : ""}">
-        <div class="push-icon">${enabled ? "✓" : "!"}</div>
+      <div class="push-switcher ${enabled || androidApp ? "enabled" : ""} ${blocked || unsupported || serverOff ? "warning" : ""}">
+        <div class="push-icon">${enabled || androidApp ? "✓" : "!"}</div>
         <div class="push-copy">
           <strong>Уведомления</strong>
           <span>${escapeHtml(message)}</span>
         </div>
-        <button class="push-button" type="button" data-action="enable-notifications" ${enabled || checking || unsupported || serverOff ? "disabled" : ""}>
+        <button class="push-button" type="button" data-action="enable-notifications" ${enabled || androidApp || checking || unsupported || serverOff ? "disabled" : ""}>
           ${buttonText}
         </button>
       </div>
