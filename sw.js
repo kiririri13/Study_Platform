@@ -67,3 +67,35 @@ self.addEventListener("fetch", (event) => {
     })
   );
 });
+
+self.addEventListener("push", (event) => {
+  const fallback = {
+    title: "Urokroom",
+    body: "У вас новое уведомление.",
+    url: "/"
+  };
+  const data = event.data ? event.data.json() : fallback;
+  const title = data.title || fallback.title;
+  const options = {
+    body: data.body || fallback.body,
+    icon: "/assets/icons/icon-192.png",
+    badge: "/assets/icons/maskable-192.png",
+    data: { url: data.url || fallback.url },
+    tag: data.relatedId || "urokroom-notification"
+  };
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const url = event.notification.data?.url || "/";
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
+      for (const client of clients) {
+        if ("focus" in client) return client.focus();
+      }
+      if (self.clients.openWindow) return self.clients.openWindow(url);
+      return undefined;
+    })
+  );
+});

@@ -27,6 +27,12 @@ except ImportError:  # pragma: no cover - handled at runtime with a clear messag
     DatabaseIntegrityError = Exception
     dict_row = None
 
+try:
+    from pywebpush import WebPushException, webpush
+except ImportError:  # pragma: no cover - push is disabled until the dependency is installed.
+    WebPushException = Exception
+    webpush = None
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -62,11 +68,15 @@ SMTP_FROM = os.environ.get("SMTP_FROM", SMTP_USER).strip()
 SMTP_USE_TLS = os.environ.get("SMTP_USE_TLS", "true").lower() not in ("0", "false", "no", "off")
 SMTP_USE_SSL = os.environ.get("SMTP_USE_SSL", "true" if SMTP_PORT == 465 else "false").lower() not in ("0", "false", "no", "off")
 SMTP_TIMEOUT = int(os.environ.get("SMTP_TIMEOUT", "30") or 30)
-EMAIL_NOTIFICATIONS_ENABLED = os.environ.get("EMAIL_NOTIFICATIONS_ENABLED", "true").lower() not in ("0", "false", "no", "off")
+EMAIL_NOTIFICATIONS_ENABLED = os.environ.get("EMAIL_NOTIFICATIONS_ENABLED", "false").lower() not in ("0", "false", "no", "off")
 EMAIL_PROVIDER = os.environ.get("EMAIL_PROVIDER", "smtp").strip().lower()
 BREVO_API_KEY = os.environ.get("BREVO_API_KEY", "").strip()
 BREVO_API_URL = os.environ.get("BREVO_API_URL", "https://api.brevo.com/v3/smtp/email").strip()
 BREVO_SENDER_NAME = os.environ.get("BREVO_SENDER_NAME", "Study Platform").strip()
+PUSH_NOTIFICATIONS_ENABLED = os.environ.get("PUSH_NOTIFICATIONS_ENABLED", "false").lower() not in ("0", "false", "no", "off")
+VAPID_PUBLIC_KEY = os.environ.get("VAPID_PUBLIC_KEY", "").strip()
+VAPID_PRIVATE_KEY = os.environ.get("VAPID_PRIVATE_KEY", "").strip()
+VAPID_CLAIMS_SUB = os.environ.get("VAPID_CLAIMS_SUB", f"mailto:{SMTP_FROM}" if SMTP_FROM else "").strip()
 
 
 SCHEMA_SQL = """
@@ -197,6 +207,17 @@ CREATE TABLE IF NOT EXISTS notifications (
   created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  endpoint TEXT NOT NULL UNIQUE,
+  p256dh TEXT NOT NULL,
+  auth TEXT NOT NULL,
+  user_agent TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS file_attachments (
   id TEXT PRIMARY KEY,
   owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -219,6 +240,7 @@ CREATE INDEX IF NOT EXISTS idx_assignment_recipients_student ON assignment_recip
 CREATE INDEX IF NOT EXISTS idx_lessons_teacher ON lessons(teacher_id);
 CREATE INDEX IF NOT EXISTS idx_lessons_student ON lessons(student_id);
 CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id);
+CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user ON push_subscriptions(user_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_notifications_overdue_once
   ON notifications(user_id, related_type, related_id)
   WHERE related_type = 'assignment_overdue';
@@ -584,7 +606,7 @@ def create_notification(conn, user_id: str, title: str, message: str, related_ty
         """,
         (notification_id, user_id, related_type, title, message, related_type, related_id, now_iso()),
     )
-    queue_email_notification(user_id, title, message)
+    queue_push_notification(user_id, title, message, related_type, related_id)
 
 
 def create_notification_once(conn, user_id: str, title: str, message: str, related_type: str, related_id: str) -> None:
@@ -600,7 +622,63 @@ def create_notification_once(conn, user_id: str, title: str, message: str, relat
         (notification_id, user_id, related_type, title, message, related_type, related_id, now_iso()),
     )
     if row:
-        queue_email_notification(user_id, title, message)
+        queue_push_notification(user_id, title, message, related_type, related_id)
+
+
+def queue_push_notification(user_id: str, title: str, message: str, related_type: str, related_id: str) -> None:
+    if not push_notifications_configured():
+        return
+    thread = threading.Thread(
+        target=send_push_notification,
+        args=(user_id, title, message, related_type, related_id),
+        daemon=True,
+    )
+    thread.start()
+
+
+def push_notifications_configured() -> bool:
+    return bool(PUSH_NOTIFICATIONS_ENABLED and webpush and VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY)
+
+
+def send_push_notification(user_id: str, title: str, message: str, related_type: str, related_id: str) -> None:
+    if not push_notifications_configured() or psycopg is None:
+        return
+    payload = json.dumps(
+        {
+            "title": title,
+            "body": message,
+            "url": "/",
+            "relatedType": related_type,
+            "relatedId": related_id,
+        },
+        ensure_ascii=False,
+    )
+    try:
+        with connect() as conn:
+            subscriptions = fetchall(conn, "SELECT * FROM push_subscriptions WHERE user_id = %s", (user_id,))
+            for subscription in subscriptions:
+                subscription_info = {
+                    "endpoint": subscription["endpoint"],
+                    "keys": {
+                        "p256dh": subscription["p256dh"],
+                        "auth": subscription["auth"],
+                    },
+                }
+                try:
+                    webpush(
+                        subscription_info=subscription_info,
+                        data=payload,
+                        vapid_private_key=VAPID_PRIVATE_KEY,
+                        vapid_claims={"sub": VAPID_CLAIMS_SUB or "mailto:admin@urokroom.ru"},
+                    )
+                except WebPushException as exc:
+                    status_code = getattr(getattr(exc, "response", None), "status_code", None)
+                    if status_code in (404, 410):
+                        conn.execute("DELETE FROM push_subscriptions WHERE id = %s", (subscription["id"],))
+                    else:
+                        print(f"Push notification was not sent to {subscription['endpoint']}: {exc}", file=sys.stderr)
+    except Exception as exc:
+        print(f"Push notification dispatch failed for {user_id}: {exc}", file=sys.stderr)
 
 
 def queue_email_notification(user_id: str, title: str, message: str) -> None:
@@ -904,6 +982,12 @@ class Handler(BaseHTTPRequestHandler):
                     return self.read_all_notifications(conn, user)
                 if method == "PATCH" and path.startswith("/api/notifications/") and path.endswith("/read"):
                     return self.read_notification(conn, user, path.split("/")[3])
+                if method == "GET" and path == "/api/push/config":
+                    return self.get_push_config(conn, user)
+                if method == "POST" and path == "/api/push/subscribe":
+                    return self.subscribe_push(conn, user)
+                if method == "POST" and path == "/api/push/unsubscribe":
+                    return self.unsubscribe_push(conn, user)
 
                 self.send_error_json(HTTPStatus.NOT_FOUND, "РњР°СЂС€СЂСѓС‚ РЅРµ РЅР°Р№РґРµРЅ.")
         except json.JSONDecodeError:
@@ -1428,6 +1512,47 @@ class Handler(BaseHTTPRequestHandler):
 
     def read_notification(self, conn, user: dict, notification_id: str) -> None:
         conn.execute("UPDATE notifications SET is_read = TRUE WHERE id = %s AND user_id = %s", (notification_id, user["id"]))
+        self.send_json({"ok": True})
+
+    def get_push_config(self, conn, user: dict) -> None:
+        self.send_json({
+            "enabled": push_notifications_configured(),
+            "publicKey": VAPID_PUBLIC_KEY if push_notifications_configured() else "",
+        })
+
+    def subscribe_push(self, conn, user: dict) -> None:
+        if not push_notifications_configured():
+            self.send_error_json(HTTPStatus.BAD_REQUEST, "Push notifications are not configured.")
+            return
+        data = self.read_json()
+        endpoint = str(data.get("endpoint", "")).strip()
+        keys = data.get("keys") or {}
+        p256dh = str(keys.get("p256dh", "")).strip()
+        auth = str(keys.get("auth", "")).strip()
+        if not endpoint or not p256dh or not auth:
+            self.send_error_json(HTTPStatus.BAD_REQUEST, "Push subscription is incomplete.")
+            return
+        ts = now_iso()
+        conn.execute(
+            """
+            INSERT INTO push_subscriptions (id, user_id, endpoint, p256dh, auth, user_agent, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (endpoint) DO UPDATE SET
+              user_id = EXCLUDED.user_id,
+              p256dh = EXCLUDED.p256dh,
+              auth = EXCLUDED.auth,
+              user_agent = EXCLUDED.user_agent,
+              updated_at = EXCLUDED.updated_at
+            """,
+            (new_id("ps"), user["id"], endpoint, p256dh, auth, self.headers.get("User-Agent", ""), ts, ts),
+        )
+        self.send_json({"ok": True})
+
+    def unsubscribe_push(self, conn, user: dict) -> None:
+        data = self.read_json()
+        endpoint = str(data.get("endpoint", "")).strip()
+        if endpoint:
+            conn.execute("DELETE FROM push_subscriptions WHERE user_id = %s AND endpoint = %s", (user["id"], endpoint))
         self.send_json({"ok": True})
 
 

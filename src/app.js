@@ -22,6 +22,31 @@
     });
   }
 
+  function urlBase64ToUint8Array(value) {
+    const padding = "=".repeat((4 - value.length % 4) % 4);
+    const base64 = (value + padding).replace(/-/g, "+").replace(/_/g, "/");
+    const raw = window.atob(base64);
+    return Uint8Array.from([...raw].map((char) => char.charCodeAt(0)));
+  }
+
+  async function enablePushNotifications() {
+    if (!token || !("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) return;
+    if (Notification.permission === "denied") return;
+    const config = await api("/api/push/config").catch(() => null);
+    if (!config?.enabled || !config.publicKey) return;
+    const registration = await navigator.serviceWorker.ready;
+    let subscription = await registration.pushManager.getSubscription();
+    if (!subscription) {
+      const permission = Notification.permission === "granted" ? "granted" : await Notification.requestPermission();
+      if (permission !== "granted") return;
+      subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(config.publicKey)
+      });
+    }
+    await api("/api/push/subscribe", { method: "POST", body: JSON.stringify(subscription.toJSON()) }).catch(() => {});
+  }
+
   let token = localStorage.getItem(TOKEN_KEY);
   let theme = localStorage.getItem(THEME_KEY) || "light";
   let user = null;
@@ -83,6 +108,7 @@
       const data = await api("/api/auth/me");
       user = data.user;
       await loadData();
+      enablePushNotifications().catch(() => {});
     } catch (err) {
       if (err.status === 401) {
         localStorage.removeItem(TOKEN_KEY);
@@ -123,6 +149,7 @@
       students = deriveStudents();
     }
     normalizeViewForRole();
+    enablePushNotifications().catch(() => {});
   }
 
   function normalizeViewForRole() {
