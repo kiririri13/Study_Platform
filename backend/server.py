@@ -7,6 +7,7 @@ import mimetypes
 import os
 import smtplib
 import sys
+import threading
 import uuid
 from datetime import datetime, timezone
 from email.message import EmailMessage
@@ -577,7 +578,7 @@ def create_notification(conn, user_id: str, title: str, message: str, related_ty
         """,
         (notification_id, user_id, related_type, title, message, related_type, related_id, now_iso()),
     )
-    send_email_notification(conn, user_id, title, message)
+    queue_email_notification(user_id, title, message)
 
 
 def create_notification_once(conn, user_id: str, title: str, message: str, related_type: str, related_id: str) -> None:
@@ -593,13 +594,27 @@ def create_notification_once(conn, user_id: str, title: str, message: str, relat
         (notification_id, user_id, related_type, title, message, related_type, related_id, now_iso()),
     )
     if row:
-        send_email_notification(conn, user_id, title, message)
+        queue_email_notification(user_id, title, message)
 
 
-def send_email_notification(conn, user_id: str, title: str, message: str) -> None:
+def queue_email_notification(user_id: str, title: str, message: str) -> None:
     if not EMAIL_NOTIFICATIONS_ENABLED or not SMTP_HOST or not SMTP_FROM:
         return
-    user = fetchone(conn, "SELECT email, first_name, last_name FROM users WHERE id = %s AND is_active = TRUE", (user_id,))
+    thread = threading.Thread(target=send_email_notification, args=(user_id, title, message), daemon=True)
+    thread.start()
+
+
+def send_email_notification(user_id: str, title: str, message: str) -> None:
+    if not EMAIL_NOTIFICATIONS_ENABLED or not SMTP_HOST or not SMTP_FROM:
+        return
+    if psycopg is None:
+        return
+    try:
+        with connect() as conn:
+            user = fetchone(conn, "SELECT email, first_name, last_name FROM users WHERE id = %s AND is_active = TRUE", (user_id,))
+    except Exception as exc:
+        print(f"Email notification user lookup failed for {user_id}: {exc}", file=sys.stderr)
+        return
     if not user or not user["email"]:
         return
     recipient_name = f"{user['first_name']} {user['last_name']}".strip()
