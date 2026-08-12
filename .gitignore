@@ -5,3 +5,10 @@ backend/*.sqlite3-*
 .env
 .venv/
 artifacts/
+android/.gradle/
+android/.idea/
+android/build/
+android/app/build/
+android/local.properties
+android/keystore/
+android/signing.properties

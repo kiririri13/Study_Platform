@@ -2,6 +2,16 @@ plugins {
     id "com.android.application"
 }
 
+if (file("google-services.json").exists()) {
+    apply plugin: "com.google.gms.google-services"
+}
+
+def signingProperties = new Properties()
+def signingPropertiesFile = rootProject.file("signing.properties")
+if (signingPropertiesFile.exists()) {
+    signingPropertiesFile.withInputStream { signingProperties.load(it) }
+}
+
 android {
     namespace "com.studyplatform.app"
     compileSdk 35
@@ -18,4 +28,27 @@ android {
         versionName "1.0.0"
         buildConfigField "String", "WEB_APP_URL", "\"${project.findProperty("WEB_APP_URL") ?: "http://10.0.2.2:5173"}\""
     }
+
+    signingConfigs {
+        release {
+            if (signingPropertiesFile.exists()) {
+                storeFile rootProject.file(signingProperties.getProperty("storeFile"))
+                storePassword signingProperties.getProperty("storePassword")
+                keyAlias signingProperties.getProperty("keyAlias")
+                keyPassword signingProperties.getProperty("keyPassword")
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            signingConfig signingConfigs.release
+            minifyEnabled false
+        }
+    }
+}
+
+dependencies {
+    implementation platform("com.google.firebase:firebase-bom:34.0.0")
+    implementation "com.google.firebase:firebase-messaging"
 }

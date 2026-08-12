@@ -29,22 +29,47 @@
     return Uint8Array.from([...raw].map((char) => char.charCodeAt(0)));
   }
 
-  async function enablePushNotifications() {
-    if (!token || !("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) return;
-    if (Notification.permission === "denied") return;
+  async function enablePushNotifications({ askPermission = false } = {}) {
+    if (!token) return;
+    if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
+      pushState = { status: "unsupported", message: "Это устройство не поддерживает push-уведомления." };
+      return;
+    }
+
+    pushState = { status: "checking", message: "Проверяем уведомления..." };
     const config = await api("/api/push/config").catch(() => null);
-    if (!config?.enabled || !config.publicKey) return;
+    if (!config?.enabled || !config.publicKey) {
+      pushState = { status: "server-off", message: "Уведомления на сервере еще не настроены." };
+      return;
+    }
+
+    if (Notification.permission === "denied") {
+      pushState = { status: "blocked", message: "Уведомления заблокированы в настройках браузера." };
+      return;
+    }
+
     const registration = await navigator.serviceWorker.ready;
     let subscription = await registration.pushManager.getSubscription();
     if (!subscription) {
-      const permission = Notification.permission === "granted" ? "granted" : await Notification.requestPermission();
-      if (permission !== "granted") return;
+      if (Notification.permission !== "granted") {
+        if (!askPermission) {
+          pushState = { status: "permission-needed", message: "Нужно один раз разрешить уведомления." };
+          return;
+        }
+        const permission = await Notification.requestPermission();
+        if (permission !== "granted") {
+          pushState = { status: permission === "denied" ? "blocked" : "permission-needed", message: "Без разрешения система не будет показывать уведомления." };
+          return;
+        }
+      }
       subscription = await registration.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: urlBase64ToUint8Array(config.publicKey)
       });
     }
-    await api("/api/push/subscribe", { method: "POST", body: JSON.stringify(subscription.toJSON()) }).catch(() => {});
+
+    await api("/api/push/subscribe", { method: "POST", body: JSON.stringify(subscription.toJSON()) });
+    pushState = { status: "enabled", message: "Уведомления включены." };
   }
 
   let token = localStorage.getItem(TOKEN_KEY);
@@ -56,6 +81,7 @@
   let lessons = [];
   let notifications = [];
   let profile = null;
+  let pushState = { status: "idle", message: "" };
   let view = "dashboard";
   let modal = null;
   let previewAttachment = null;
@@ -99,6 +125,15 @@
     return data;
   }
 
+  function syncAndroidAuthToken() {
+    if (!window.UrokroomAndroid || typeof window.UrokroomAndroid.syncAuthToken !== "function") return;
+    try {
+      window.UrokroomAndroid.syncAuthToken(token || "");
+    } catch (err) {
+      // Android bridge can be unavailable in a regular browser.
+    }
+  }
+
   async function bootstrap() {
     if (!token) {
       render();
@@ -107,8 +142,9 @@
     try {
       const data = await api("/api/auth/me");
       user = data.user;
+      syncAndroidAuthToken();
       await loadData();
-      enablePushNotifications().catch(() => {});
+      enablePushNotifications().then(() => render()).catch(() => {});
     } catch (err) {
       if (err.status === 401) {
         localStorage.removeItem(TOKEN_KEY);
@@ -149,7 +185,7 @@
       students = deriveStudents();
     }
     normalizeViewForRole();
-    enablePushNotifications().catch(() => {});
+    enablePushNotifications().then(() => render()).catch(() => {});
   }
 
   function normalizeViewForRole() {
@@ -574,6 +610,7 @@
           ${renderSidebarAccount()}
           ${renderNav()}
           ${renderThemeSwitcher()}
+          ${renderNotificationSwitcher()}
           <button class="btn secondary sidebar-logout" data-action="logout">Выйти</button>
         </aside>
         <main class="main">
@@ -712,6 +749,29 @@
             `).join("")}
           </div>
         ` : ""}
+      </div>
+    `;
+  }
+
+  function renderNotificationSwitcher() {
+    const status = pushState.status;
+    const enabled = status === "enabled";
+    const blocked = status === "blocked";
+    const unsupported = status === "unsupported";
+    const serverOff = status === "server-off";
+    const checking = status === "checking";
+    const message = pushState.message || (enabled ? "Уведомления включены." : "Разрешите уведомления, чтобы получать важные события.");
+    const buttonText = checking ? "Проверяем..." : enabled ? "Включены" : "Включить";
+    return `
+      <div class="push-switcher ${enabled ? "enabled" : ""} ${blocked || unsupported || serverOff ? "warning" : ""}">
+        <div class="push-icon">${enabled ? "✓" : "!"}</div>
+        <div class="push-copy">
+          <strong>Уведомления</strong>
+          <span>${escapeHtml(message)}</span>
+        </div>
+        <button class="push-button" type="button" data-action="enable-notifications" ${enabled || checking || unsupported || serverOff ? "disabled" : ""}>
+          ${buttonText}
+        </button>
       </div>
     `;
   }
@@ -1959,6 +2019,7 @@
         token = response.token;
         user = response.user;
         localStorage.setItem(TOKEN_KEY, token);
+        syncAndroidAuthToken();
         await loadData();
       });
     });
@@ -2182,6 +2243,17 @@
       localStorage.setItem(THEME_KEY, theme);
       render();
     }));
+    document.querySelectorAll("[data-action='enable-notifications']").forEach((button) => button.addEventListener("click", () => {
+      button.disabled = true;
+      pushState = { status: "checking", message: "Включаем уведомления..." };
+      render();
+      enablePushNotifications({ askPermission: true })
+        .then(() => render())
+        .catch((err) => {
+          pushState = { status: "error", message: err.message || "Не удалось включить уведомления." };
+          render();
+        });
+    }));
     document.querySelectorAll("[data-lesson-conducted]").forEach((button) => button.addEventListener("click", () => {
       const [lessonId, conducted] = button.dataset.lessonConducted.split(":");
       run(async () => {
@@ -2194,6 +2266,7 @@
         await api("/api/auth/logout", { method: "POST", body: "{}" }).catch(() => {});
         localStorage.removeItem(TOKEN_KEY);
         token = null;
+        syncAndroidAuthToken();
         user = null;
         students = [];
         groups = [];
@@ -2201,6 +2274,7 @@
         lessons = [];
         notifications = [];
         profile = null;
+        pushState = { status: "idle", message: "" };
         view = "dashboard";
         previewAttachment = null;
         expandedLessonId = null;

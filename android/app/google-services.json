@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "458150739572",
+    "project_id": "urokroom",
+    "storage_bucket": "urokroom.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:458150739572:android:fa9076273e6d7f69f15b21",
+        "android_client_info": {
+          "package_name": "com.studyplatform.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAVm2qtBadv2qlBh3k8wkDFk0JUfApFP4U"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -33,6 +33,13 @@ except ImportError:  # pragma: no cover - push is disabled until the dependency 
     WebPushException = Exception
     webpush = None
 
+try:
+    from google.auth.transport.requests import Request as GoogleAuthRequest
+    from google.oauth2 import service_account
+except ImportError:  # pragma: no cover - FCM is disabled until the dependency is installed.
+    GoogleAuthRequest = None
+    service_account = None
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -77,6 +84,10 @@ PUSH_NOTIFICATIONS_ENABLED = os.environ.get("PUSH_NOTIFICATIONS_ENABLED", "false
 VAPID_PUBLIC_KEY = os.environ.get("VAPID_PUBLIC_KEY", "").strip()
 VAPID_PRIVATE_KEY = os.environ.get("VAPID_PRIVATE_KEY", "").strip()
 VAPID_CLAIMS_SUB = os.environ.get("VAPID_CLAIMS_SUB", f"mailto:{SMTP_FROM}" if SMTP_FROM else "").strip()
+FCM_NOTIFICATIONS_ENABLED = os.environ.get("FCM_NOTIFICATIONS_ENABLED", "false").lower() not in ("0", "false", "no", "off")
+FCM_PROJECT_ID = os.environ.get("FCM_PROJECT_ID", "").strip()
+GOOGLE_APPLICATION_CREDENTIALS = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "").strip()
+FCM_SCOPE = "https://www.googleapis.com/auth/firebase.messaging"
 
 
 SCHEMA_SQL = """
@@ -218,6 +229,16 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS fcm_tokens (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token TEXT NOT NULL UNIQUE,
+  platform TEXT NOT NULL DEFAULT 'android',
+  user_agent TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS file_attachments (
   id TEXT PRIMARY KEY,
   owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -241,6 +262,7 @@ CREATE INDEX IF NOT EXISTS idx_lessons_teacher ON lessons(teacher_id);
 CREATE INDEX IF NOT EXISTS idx_lessons_student ON lessons(student_id);
 CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id);
 CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user ON push_subscriptions(user_id);
+CREATE INDEX IF NOT EXISTS idx_fcm_tokens_user ON fcm_tokens(user_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_notifications_overdue_once
   ON notifications(user_id, related_type, related_id)
   WHERE related_type = 'assignment_overdue';
@@ -607,6 +629,7 @@ def create_notification(conn, user_id: str, title: str, message: str, related_ty
         (notification_id, user_id, related_type, title, message, related_type, related_id, now_iso()),
     )
     queue_push_notification(user_id, title, message, related_type, related_id)
+    queue_fcm_notification(user_id, title, message, related_type, related_id)
 
 
 def create_notification_once(conn, user_id: str, title: str, message: str, related_type: str, related_id: str) -> None:
@@ -623,6 +646,7 @@ def create_notification_once(conn, user_id: str, title: str, message: str, relat
     )
     if row:
         queue_push_notification(user_id, title, message, related_type, related_id)
+        queue_fcm_notification(user_id, title, message, related_type, related_id)
 
 
 def queue_push_notification(user_id: str, title: str, message: str, related_type: str, related_id: str) -> None:
@@ -638,6 +662,91 @@ def queue_push_notification(user_id: str, title: str, message: str, related_type
 
 def push_notifications_configured() -> bool:
     return bool(PUSH_NOTIFICATIONS_ENABLED and webpush and VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY)
+
+
+def fcm_notifications_configured() -> bool:
+    return bool(
+        FCM_NOTIFICATIONS_ENABLED
+        and FCM_PROJECT_ID
+        and GOOGLE_APPLICATION_CREDENTIALS
+        and GoogleAuthRequest
+        and service_account
+    )
+
+
+def queue_fcm_notification(user_id: str, title: str, message: str, related_type: str, related_id: str) -> None:
+    if not fcm_notifications_configured():
+        return
+    thread = threading.Thread(
+        target=send_fcm_notification,
+        args=(user_id, title, message, related_type, related_id),
+        daemon=True,
+    )
+    thread.start()
+
+
+def get_fcm_access_token() -> str:
+    credentials = service_account.Credentials.from_service_account_file(
+        GOOGLE_APPLICATION_CREDENTIALS,
+        scopes=[FCM_SCOPE],
+    )
+    credentials.refresh(GoogleAuthRequest())
+    return credentials.token
+
+
+def send_fcm_message(token: str, title: str, message: str, related_type: str, related_id: str) -> None:
+    access_token = get_fcm_access_token()
+    payload = {
+        "message": {
+            "token": token,
+            "notification": {
+                "title": title,
+                "body": message,
+            },
+            "data": {
+                "url": "/",
+                "relatedType": related_type or "",
+                "relatedId": related_id or "",
+            },
+            "android": {
+                "priority": "HIGH",
+                "notification": {
+                    "channel_id": "urokroom_notifications",
+                    "click_action": "OPEN_UROKROOM",
+                },
+            },
+        }
+    }
+    request = Request(
+        f"https://fcm.googleapis.com/v1/projects/{FCM_PROJECT_ID}/messages:send",
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json; UTF-8",
+        },
+        method="POST",
+    )
+    with urlopen(request, timeout=15) as response:
+        response.read()
+
+
+def send_fcm_notification(user_id: str, title: str, message: str, related_type: str, related_id: str) -> None:
+    if not fcm_notifications_configured() or psycopg is None:
+        return
+    try:
+        with connect() as conn:
+            tokens = fetchall(conn, "SELECT * FROM fcm_tokens WHERE user_id = %s", (user_id,))
+            for row in tokens:
+                try:
+                    send_fcm_message(row["token"], title, message, related_type, related_id)
+                except Exception as exc:
+                    text = str(exc)
+                    if "Requested entity was not found" in text or "UNREGISTERED" in text:
+                        conn.execute("DELETE FROM fcm_tokens WHERE id = %s", (row["id"],))
+                    else:
+                        print(f"FCM notification was not sent to {row['id']}: {exc}", file=sys.stderr)
+    except Exception as exc:
+        print(f"FCM notification dispatch failed for {user_id}: {exc}", file=sys.stderr)
 
 
 def send_push_notification(user_id: str, title: str, message: str, related_type: str, related_id: str) -> None:
@@ -990,6 +1099,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self.subscribe_push(conn, user)
                 if method == "POST" and path == "/api/push/unsubscribe":
                     return self.unsubscribe_push(conn, user)
+                if method == "POST" and path == "/api/fcm/register":
+                    return self.register_fcm_token(conn, user)
 
                 self.send_error_json(HTTPStatus.NOT_FOUND, "РњР°СЂС€СЂСѓС‚ РЅРµ РЅР°Р№РґРµРЅ.")
         except json.JSONDecodeError:
@@ -1589,6 +1700,28 @@ class Handler(BaseHTTPRequestHandler):
         endpoint = str(data.get("endpoint", "")).strip()
         if endpoint:
             conn.execute("DELETE FROM push_subscriptions WHERE user_id = %s AND endpoint = %s", (user["id"], endpoint))
+        self.send_json({"ok": True})
+
+    def register_fcm_token(self, conn, user: dict) -> None:
+        data = self.read_json()
+        token = str(data.get("token", "")).strip()
+        platform = str(data.get("platform", "android")).strip() or "android"
+        if not token:
+            self.send_error_json(HTTPStatus.BAD_REQUEST, "FCM token is required.")
+            return
+        ts = now_iso()
+        conn.execute(
+            """
+            INSERT INTO fcm_tokens (id, user_id, token, platform, user_agent, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (token) DO UPDATE SET
+              user_id = EXCLUDED.user_id,
+              platform = EXCLUDED.platform,
+              user_agent = EXCLUDED.user_agent,
+              updated_at = EXCLUDED.updated_at
+            """,
+            (new_id("fcm"), user["id"], token, platform[:40], self.headers.get("User-Agent", ""), ts, ts),
+        )
         self.send_json({"ok": True})
 
 
