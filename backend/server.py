@@ -188,7 +188,7 @@ CREATE TABLE IF NOT EXISTS lessons (
   teacher_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   student_id TEXT REFERENCES student_profiles(id) ON DELETE CASCADE,
   group_id TEXT REFERENCES student_groups(id) ON DELETE CASCADE,
-  title TEXT NOT NULL DEFAULT 'РњР°С‚РµРјР°С‚РёРєР°',
+  title TEXT NOT NULL DEFAULT 'Математика',
   topic TEXT NOT NULL DEFAULT '',
   start_datetime TEXT NOT NULL,
   end_datetime TEXT NOT NULL,
@@ -934,8 +934,8 @@ def sync_overdue_assignments(conn) -> None:
         create_notification_once(
             conn,
             row["student_user_id"],
-            "Р”РѕРјР°С€РЅРµРµ Р·Р°РґР°РЅРёРµ РїСЂРѕСЃСЂРѕС‡РµРЅРѕ",
-            f"РЎСЂРѕРє СЃРґР°С‡Рё Р·Р°РґР°РЅРёСЏ \"{row['title']}\" РёСЃС‚С‘Рє {row['due_date']}. РћС‚РїСЂР°РІСЊС‚Рµ СЂРµС€РµРЅРёРµ, РєРѕРіРґР° РѕРЅРѕ Р±СѓРґРµС‚ РіРѕС‚РѕРІРѕ.",
+            "Домашнее задание просрочено",
+            f"Срок сдачи задания \"{row['title']}\" истёк {row['due_date']}. Отправьте решение, когда оно будет готово.",
             "assignment_overdue",
             row["id"],
         )
@@ -943,16 +943,16 @@ def sync_overdue_assignments(conn) -> None:
             create_notification_once(
                 conn,
                 parent_user_id,
-                "Р”РѕРјР°С€РЅРµРµ Р·Р°РґР°РЅРёРµ РїСЂРѕСЃСЂРѕС‡РµРЅРѕ",
-                f"РЎСЂРѕРє СЃРґР°С‡Рё Р·Р°РґР°РЅРёСЏ \"{row['title']}\" РёСЃС‚С‘Рє {row['due_date']}.",
+                "Домашнее задание просрочено",
+                f"Срок сдачи задания \"{row['title']}\" истёк {row['due_date']}.",
                 "assignment_overdue",
                 row["id"],
             )
         create_notification_once(
             conn,
             row["teacher_id"],
-            "РџСЂРѕСЃСЂРѕС‡РµРЅРѕ РґРѕРјР°С€РЅРµРµ Р·Р°РґР°РЅРёРµ",
-            f"{student_name} РЅРµ СЃРґР°Р»(Р°) Р·Р°РґР°РЅРёРµ \"{row['title']}\" РґРѕ {row['due_date']}.",
+            "Просрочено домашнее задание",
+            f"{student_name} не сдал(а) задание \"{row['title']}\" до {row['due_date']}.",
             "assignment_overdue",
             row["id"],
         )
@@ -1000,7 +1000,7 @@ class Handler(BaseHTTPRequestHandler):
     def require_user(self, conn) -> dict | None:
         user = self.current_user(conn)
         if not user:
-            self.send_error_json(HTTPStatus.UNAUTHORIZED, "РўСЂРµР±СѓРµС‚СЃСЏ Р°РІС‚РѕСЂРёР·Р°С†РёСЏ.")
+            self.send_error_json(HTTPStatus.UNAUTHORIZED, "Требуется авторизация.")
             return None
         return user
 
@@ -1102,19 +1102,19 @@ class Handler(BaseHTTPRequestHandler):
                 if method == "POST" and path == "/api/fcm/register":
                     return self.register_fcm_token(conn, user)
 
-                self.send_error_json(HTTPStatus.NOT_FOUND, "РњР°СЂС€СЂСѓС‚ РЅРµ РЅР°Р№РґРµРЅ.")
+                self.send_error_json(HTTPStatus.NOT_FOUND, "Маршрут не найден.")
         except json.JSONDecodeError:
-            self.send_error_json(HTTPStatus.BAD_REQUEST, "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Р№ JSON.")
+            self.send_error_json(HTTPStatus.BAD_REQUEST, "Некорректный JSON.")
         except DatabaseIntegrityError as exc:
-            self.send_error_json(HTTPStatus.BAD_REQUEST, f"РћС€РёР±РєР° РґР°РЅРЅС‹С…: {exc}")
+            self.send_error_json(HTTPStatus.BAD_REQUEST, f"Ошибка данных: {exc}")
         except Exception as exc:
-            self.send_error_json(HTTPStatus.INTERNAL_SERVER_ERROR, f"РћС€РёР±РєР° СЃРµСЂРІРµСЂР°: {exc}")
+            self.send_error_json(HTTPStatus.INTERNAL_SERVER_ERROR, f"Ошибка сервера: {exc}")
 
     def login(self, conn) -> None:
         data = self.read_json()
         user = fetchone(conn, "SELECT * FROM users WHERE email = %s AND is_active = TRUE", (data.get("email", ""),))
         if not user or not verify_password(data.get("password", ""), user["password_hash"]):
-            self.send_error_json(HTTPStatus.UNAUTHORIZED, "РќРµРІРµСЂРЅС‹Р№ email РёР»Рё РїР°СЂРѕР»СЊ.")
+            self.send_error_json(HTTPStatus.UNAUTHORIZED, "Неверный email или пароль.")
             return
         token = uuid.uuid4().hex + uuid.uuid4().hex
         conn.execute("INSERT INTO sessions (token, user_id, created_at) VALUES (%s, %s, %s)", (token, user["id"], now_iso()))
@@ -1162,14 +1162,14 @@ class Handler(BaseHTTPRequestHandler):
 
     def get_students(self, conn, user: dict) -> None:
         if user["role"] != "teacher":
-            self.send_error_json(HTTPStatus.FORBIDDEN, "РЈС‡РµРЅРёРєРё РґРѕСЃС‚СѓРїРЅС‹ С‚РѕР»СЊРєРѕ СѓС‡РёС‚РµР»СЋ.")
+            self.send_error_json(HTTPStatus.FORBIDDEN, "Ученики доступны только учителю.")
             return
         rows = fetchall(conn, "SELECT * FROM student_profiles WHERE teacher_id = %s ORDER BY created_at", (user["id"],))
         self.send_json({"students": [student_payload(conn, row) for row in rows]})
 
     def create_student(self, conn, user: dict) -> None:
         if user["role"] != "teacher":
-            self.send_error_json(HTTPStatus.FORBIDDEN, "РЎРѕР·РґР°РІР°С‚СЊ СѓС‡РµРЅРёРєРѕРІ РјРѕР¶РµС‚ С‚РѕР»СЊРєРѕ СѓС‡РёС‚РµР»СЊ.")
+            self.send_error_json(HTTPStatus.FORBIDDEN, "Создавать учеников может только учитель.")
             return
         data = self.read_json()
         meeting_url = data.get("meetingUrl", "").strip()
@@ -1277,13 +1277,13 @@ class Handler(BaseHTTPRequestHandler):
         try:
             paid_lessons = max(0, int(data.get("paidLessons") or 0))
         except (TypeError, ValueError):
-            self.send_error_json(HTTPStatus.BAD_REQUEST, "РљРѕР»РёС‡РµСЃС‚РІРѕ СѓСЂРѕРєРѕРІ РґРѕР»Р¶РЅРѕ Р±С‹С‚СЊ С‡РёСЃР»РѕРј.")
+            self.send_error_json(HTTPStatus.BAD_REQUEST, "Количество уроков должно быть числом.")
             return
         ts = now_iso()
         if target_type == "student":
             row = fetchone(conn, "SELECT * FROM student_profiles WHERE id = %s AND teacher_id = %s", (target_id, user["id"]))
             if not row:
-                self.send_error_json(HTTPStatus.NOT_FOUND, "РЈС‡РµРЅРёРє РЅРµ РЅР°Р№РґРµРЅ.")
+                self.send_error_json(HTTPStatus.NOT_FOUND, "Ученик не найден.")
                 return
             lesson_price = nonnegative_int(data.get("lessonPrice"), row["lesson_price"])
             conn.execute(
@@ -1295,7 +1295,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         row = fetchone(conn, "SELECT * FROM student_groups WHERE id = %s AND teacher_id = %s", (target_id, user["id"]))
         if not row:
-            self.send_error_json(HTTPStatus.NOT_FOUND, "Р“СЂСѓРїРїР° РЅРµ РЅР°Р№РґРµРЅР°.")
+            self.send_error_json(HTTPStatus.NOT_FOUND, "Группа не найдена.")
             return
         conn.execute("UPDATE student_groups SET paid_lessons = %s, updated_at = %s WHERE id = %s", (paid_lessons, ts, target_id))
         row = fetchone(conn, "SELECT * FROM student_groups WHERE id = %s", (target_id,))
@@ -1323,15 +1323,15 @@ class Handler(BaseHTTPRequestHandler):
 
     def create_group(self, conn, user: dict) -> None:
         if user["role"] != "teacher":
-            self.send_error_json(HTTPStatus.FORBIDDEN, "РЎРѕР·РґР°РІР°С‚СЊ РіСЂСѓРїРїС‹ РјРѕР¶РµС‚ С‚РѕР»СЊРєРѕ СѓС‡РёС‚РµР»СЊ.")
+            self.send_error_json(HTTPStatus.FORBIDDEN, "Создавать группы может только учитель.")
             return
         data = self.read_json()
         student_ids = list(dict.fromkeys(data.get("studentIds") or []))
         if not data.get("name", "").strip():
-            self.send_error_json(HTTPStatus.BAD_REQUEST, "РЈРєР°Р¶РёС‚Рµ РЅР°Р·РІР°РЅРёРµ РіСЂСѓРїРїС‹.")
+            self.send_error_json(HTTPStatus.BAD_REQUEST, "Укажите название группы.")
             return
         if not student_ids:
-            self.send_error_json(HTTPStatus.BAD_REQUEST, "Р”РѕР±Р°РІСЊС‚Рµ РІ РіСЂСѓРїРїСѓ С…РѕС‚СЏ Р±С‹ РѕРґРЅРѕРіРѕ СѓС‡РµРЅРёРєР°.")
+            self.send_error_json(HTTPStatus.BAD_REQUEST, "Добавьте в группу хотя бы одного ученика.")
             return
         ts = now_iso()
         group_id = new_id("g")
@@ -1382,7 +1382,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def create_assignment(self, conn, user: dict) -> None:
         if user["role"] != "teacher":
-            self.send_error_json(HTTPStatus.FORBIDDEN, "РЎРѕР·РґР°РІР°С‚СЊ Р·Р°РґР°РЅРёСЏ РјРѕР¶РµС‚ С‚РѕР»СЊРєРѕ СѓС‡РёС‚РµР»СЊ.")
+            self.send_error_json(HTTPStatus.FORBIDDEN, "Создавать задания может только учитель.")
             return
         data = self.read_json()
         direct_student_ids = data.get("studentIds") or []
@@ -1396,7 +1396,7 @@ class Handler(BaseHTTPRequestHandler):
             student_ids.extend(item["student_id"] for item in member_rows)
         student_ids = list(dict.fromkeys(student_ids))
         if not student_ids:
-            self.send_error_json(HTTPStatus.BAD_REQUEST, "Р’С‹Р±РµСЂРёС‚Рµ С…РѕС‚СЏ Р±С‹ РѕРґРЅРѕРіРѕ СѓС‡РµРЅРёРєР° РёР»Рё РіСЂСѓРїРїСѓ.")
+            self.send_error_json(HTTPStatus.BAD_REQUEST, "Выберите хотя бы одного ученика или группу.")
             return
         assignment_id = new_id("a")
         ts = now_iso()
@@ -1420,13 +1420,13 @@ class Handler(BaseHTTPRequestHandler):
                 """,
                 (new_id("ar"), assignment_id, student_id, ts, ts),
             )
-            create_student_linked_notification(conn, student, "РќРѕРІРѕРµ Р·Р°РґР°РЅРёРµ", f"РќР°Р·РЅР°С‡РµРЅРѕ РґРѕРјР°С€РЅРµРµ Р·Р°РґР°РЅРёРµ: {data.get('title', '')}.", "assignment", assignment_id)
+            create_student_linked_notification(conn, student, "Новое задание", f"Назначено домашнее задание: {data.get('title', '')}.", "assignment", assignment_id)
         row = fetchone(conn, "SELECT * FROM assignments WHERE id = %s", (assignment_id,))
         self.send_json({"assignment": assignment_payload(conn, row)}, HTTPStatus.CREATED)
 
     def submit_assignment(self, conn, user: dict, assignment_id: str) -> None:
         if user["role"] != "student":
-            self.send_error_json(HTTPStatus.FORBIDDEN, "РћС‚РїСЂР°РІР»СЏС‚СЊ СЂРµС€РµРЅРёСЏ РјРѕР¶РµС‚ С‚РѕР»СЊРєРѕ СѓС‡РµРЅРёРє.")
+            self.send_error_json(HTTPStatus.FORBIDDEN, "Отправлять решения может только ученик.")
             return
         data = self.read_json()
         student = fetchone(conn, "SELECT * FROM student_profiles WHERE user_id = %s", (user["id"],))
@@ -1436,7 +1436,7 @@ class Handler(BaseHTTPRequestHandler):
             (assignment_id, student["id"]),
         )
         if not recipient:
-            self.send_error_json(HTTPStatus.NOT_FOUND, "Р—Р°РґР°РЅРёРµ РЅРµ РЅР°Р№РґРµРЅРѕ.")
+            self.send_error_json(HTTPStatus.NOT_FOUND, "Задание не найдено.")
             return
         ts = now_iso()
         conn.execute(
@@ -1449,13 +1449,13 @@ class Handler(BaseHTTPRequestHandler):
         )
         create_attachments(conn, user["id"], "submission", recipient["id"], data.get("attachments") or [])
         assignment = fetchone(conn, "SELECT * FROM assignments WHERE id = %s", (assignment_id,))
-        create_notification(conn, assignment["teacher_id"], "Р Р°Р±РѕС‚Р° РѕС‚РїСЂР°РІР»РµРЅР°", f"{user['first_name']} {user['last_name']} РѕС‚РїСЂР°РІРёР» СЂРµС€РµРЅРёРµ: {assignment['title']}.", "assignment", assignment_id)
+        create_notification(conn, assignment["teacher_id"], "Работа отправлена", f"{user['first_name']} {user['last_name']} отправил решение: {assignment['title']}.", "assignment", assignment_id)
         row = fetchone(conn, "SELECT * FROM assignments WHERE id = %s", (assignment_id,))
         self.send_json({"assignment": assignment_payload(conn, row, student["id"])})
 
     def check_assignment(self, conn, user: dict, assignment_id: str) -> None:
         if user["role"] != "teacher":
-            self.send_error_json(HTTPStatus.FORBIDDEN, "РџСЂРѕРІРµСЂСЏС‚СЊ Р·Р°РґР°РЅРёСЏ РјРѕР¶РµС‚ С‚РѕР»СЊРєРѕ СѓС‡РёС‚РµР»СЊ.")
+            self.send_error_json(HTTPStatus.FORBIDDEN, "Проверять задания может только учитель.")
             return
         data = self.read_json()
         student_id = data.get("studentId", "")
@@ -1466,13 +1466,13 @@ class Handler(BaseHTTPRequestHandler):
             (assignment_id, student_id),
         )
         if not assignment or not recipient:
-            self.send_error_json(HTTPStatus.NOT_FOUND, "Р—Р°РґР°РЅРёРµ РЅРµ РЅР°Р№РґРµРЅРѕ.")
+            self.send_error_json(HTTPStatus.NOT_FOUND, "Задание не найдено.")
             return
         try:
             score_points = int(data.get("scorePoints") or 0)
             score_max = int(data.get("scoreMax") or assignment["max_score"] or 100)
         except (TypeError, ValueError):
-            self.send_error_json(HTTPStatus.BAD_REQUEST, "Р‘Р°Р»Р»С‹ РґРѕР»Р¶РЅС‹ Р±С‹С‚СЊ С‡РёСЃР»Р°РјРё.")
+            self.send_error_json(HTTPStatus.BAD_REQUEST, "Баллы должны быть числами.")
             return
         score_points = max(0, score_points)
         score_max = max(1, score_max)
@@ -1488,18 +1488,18 @@ class Handler(BaseHTTPRequestHandler):
             (status, ts, score, score_points, score_max, data.get("teacherComment", ""), status == "revision", ts, recipient["id"]),
         )
         student = fetchone(conn, "SELECT * FROM student_profiles WHERE id = %s", (student_id,))
-        create_student_linked_notification(conn, student, "Р—Р°РґР°РЅРёРµ РїСЂРѕРІРµСЂРµРЅРѕ", f"РџСЂРѕРІРµСЂРµРЅРѕ Р·Р°РґР°РЅРёРµ \"{assignment['title']}\". Р РµР·СѓР»СЊС‚Р°С‚: {score_points}/{score_max} ({score}%).", "assignment", assignment_id)
+        create_student_linked_notification(conn, student, "Задание проверено", f"Проверено задание \"{assignment['title']}\". Результат: {score_points}/{score_max} ({score}%).", "assignment", assignment_id)
         row = fetchone(conn, "SELECT * FROM assignments WHERE id = %s", (assignment_id,))
         self.send_json({"assignment": assignment_payload(conn, row)})
 
     def update_attachment_annotation(self, conn, user: dict, attachment_id: str) -> None:
         if user["role"] != "teacher":
-            self.send_error_json(HTTPStatus.FORBIDDEN, "РџРѕРјРµС‚РєРё РЅР° СЂРµС€РµРЅРёСЏС… РјРѕР¶РµС‚ РґРµР»Р°С‚СЊ С‚РѕР»СЊРєРѕ СѓС‡РёС‚РµР»СЊ.")
+            self.send_error_json(HTTPStatus.FORBIDDEN, "Пометки на решениях может делать только учитель.")
             return
         data = self.read_json()
         attachment = fetchone(conn, "SELECT * FROM file_attachments WHERE id = %s", (attachment_id,))
         if not attachment or attachment["related_type"] != "submission":
-            self.send_error_json(HTTPStatus.NOT_FOUND, "Р¤Р°Р№Р» СЂРµС€РµРЅРёСЏ РЅРµ РЅР°Р№РґРµРЅ.")
+            self.send_error_json(HTTPStatus.NOT_FOUND, "Файл решения не найден.")
             return
         recipient = fetchone(conn, "SELECT * FROM assignment_recipients WHERE id = %s", (attachment["related_id"],))
         assignment = None if not recipient else fetchone(
@@ -1508,11 +1508,11 @@ class Handler(BaseHTTPRequestHandler):
             (recipient["assignment_id"], user["id"]),
         )
         if not assignment:
-            self.send_error_json(HTTPStatus.FORBIDDEN, "РќРµС‚ РґРѕСЃС‚СѓРїР° Рє СЌС‚РѕРјСѓ С„Р°Р№Р»Сѓ.")
+            self.send_error_json(HTTPStatus.FORBIDDEN, "Нет доступа к этому файлу.")
             return
         annotation_url = data.get("annotationUrl", "")
         if annotation_url and not annotation_url.startswith("data:image/png;base64,"):
-            self.send_error_json(HTTPStatus.BAD_REQUEST, "РџРѕРјРµС‚РєРё РґРѕР»Р¶РЅС‹ Р±С‹С‚СЊ PNG-РёР·РѕР±СЂР°Р¶РµРЅРёРµРј.")
+            self.send_error_json(HTTPStatus.BAD_REQUEST, "Пометки должны быть PNG-изображением.")
             return
         conn.execute("UPDATE file_attachments SET annotation_url = %s WHERE id = %s", (annotation_url, attachment_id))
         row = fetchone(conn, "SELECT * FROM file_attachments WHERE id = %s", (attachment_id,))
@@ -1540,7 +1540,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def create_lesson(self, conn, user: dict) -> None:
         if user["role"] != "teacher":
-            self.send_error_json(HTTPStatus.FORBIDDEN, "РЎРѕР·РґР°РІР°С‚СЊ Р·Р°РЅСЏС‚РёСЏ РјРѕР¶РµС‚ С‚РѕР»СЊРєРѕ СѓС‡РёС‚РµР»СЊ.")
+            self.send_error_json(HTTPStatus.FORBIDDEN, "Создавать занятия может только учитель.")
             return
         data = self.read_json()
         student = None
@@ -1550,7 +1550,7 @@ class Handler(BaseHTTPRequestHandler):
         elif data.get("studentId"):
             student = fetchone(conn, "SELECT * FROM student_profiles WHERE id = %s AND teacher_id = %s", (data.get("studentId", ""), user["id"]))
         if not student and not group:
-            self.send_error_json(HTTPStatus.NOT_FOUND, "РЈС‡РµРЅРёРє РёР»Рё РіСЂСѓРїРїР° РЅРµ РЅР°Р№РґРµРЅС‹.")
+            self.send_error_json(HTTPStatus.NOT_FOUND, "Ученик или группа не найдены.")
             return
         lesson_format = data.get("format") or "online"
         meeting_url = data.get("meetingUrl", "").strip()
@@ -1573,7 +1573,7 @@ class Handler(BaseHTTPRequestHandler):
                 user["id"],
                 student["id"] if student else None,
                 group["id"] if group else None,
-                data.get("title") or "РњР°С‚РµРјР°С‚РёРєР°",
+                data.get("title") or "Математика",
                 data.get("topic", ""),
                 data.get("start", ""),
                 data.get("end", ""),
@@ -1587,7 +1587,7 @@ class Handler(BaseHTTPRequestHandler):
             ),
         )
         if student:
-            create_student_linked_notification(conn, student, "РќРѕРІРѕРµ Р·Р°РЅСЏС‚РёРµ", f"Р”РѕР±Р°РІР»РµРЅРѕ Р·Р°РЅСЏС‚РёРµ РїРѕ РјР°С‚РµРјР°С‚РёРєРµ: {data.get('start', '')}.", "lesson", lesson_id)
+            create_student_linked_notification(conn, student, "Новое занятие", f"Добавлено занятие по математике: {data.get('start', '')}.", "lesson", lesson_id)
         if group:
             members = fetchall(
                 conn,
@@ -1600,21 +1600,21 @@ class Handler(BaseHTTPRequestHandler):
                 (group["id"],),
             )
             for member in members:
-                create_notification(conn, member["id"], "РќРѕРІРѕРµ РіСЂСѓРїРїРѕРІРѕРµ Р·Р°РЅСЏС‚РёРµ", f"Р”РѕР±Р°РІР»РµРЅРѕ Р·Р°РЅСЏС‚РёРµ РіСЂСѓРїРїС‹ \"{group['name']}\": {data.get('start', '')}.", "lesson", lesson_id)
+                create_notification(conn, member["id"], "Новое групповое занятие", f"Добавлено занятие группы \"{group['name']}\": {data.get('start', '')}.", "lesson", lesson_id)
                 for parent_user_id in parent_user_ids_for_student(conn, member["student_id"]):
-                    create_notification(conn, parent_user_id, "РќРѕРІРѕРµ РіСЂСѓРїРїРѕРІРѕРµ Р·Р°РЅСЏС‚РёРµ", f"Р”РѕР±Р°РІР»РµРЅРѕ Р·Р°РЅСЏС‚РёРµ РіСЂСѓРїРїС‹ \"{group['name']}\": {data.get('start', '')}.", "lesson", lesson_id)
+                    create_notification(conn, parent_user_id, "Новое групповое занятие", f"Добавлено занятие группы \"{group['name']}\": {data.get('start', '')}.", "lesson", lesson_id)
         row = fetchone(conn, "SELECT * FROM lessons WHERE id = %s", (lesson_id,))
         self.send_json({"lesson": lesson_payload(row)}, HTTPStatus.CREATED)
 
     def update_lesson_conducted(self, conn, user: dict, lesson_id: str) -> None:
         if user["role"] != "teacher":
-            self.send_error_json(HTTPStatus.FORBIDDEN, "РћС‚РјРµС‡Р°С‚СЊ Р·Р°РЅСЏС‚РёСЏ РјРѕР¶РµС‚ С‚РѕР»СЊРєРѕ СѓС‡РёС‚РµР»СЊ.")
+            self.send_error_json(HTTPStatus.FORBIDDEN, "Отмечать занятия может только учитель.")
             return
         data = self.read_json()
         conducted = bool(data.get("conducted"))
         lesson = fetchone(conn, "SELECT * FROM lessons WHERE id = %s AND teacher_id = %s", (lesson_id, user["id"]))
         if not lesson:
-            self.send_error_json(HTTPStatus.NOT_FOUND, "Р—Р°РЅСЏС‚РёРµ РЅРµ РЅР°Р№РґРµРЅРѕ.")
+            self.send_error_json(HTTPStatus.NOT_FOUND, "Занятие не найдено.")
             return
 
         already_conducted = bool(lesson["conducted_at"])
