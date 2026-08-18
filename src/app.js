@@ -86,6 +86,7 @@
   let lessons = [];
   let notifications = [];
   let profile = null;
+  let passwordMessage = "";
   let pushState = { status: "idle", message: "" };
   let view = "dashboard";
   let modal = null;
@@ -692,7 +693,7 @@
   function renderSidebarAccount() {
     if (user.role === "teacher") {
       return `
-        <div class="sidebar-account neutral-account">
+        <div class="sidebar-account neutral-account sidebar-account-link" data-view="profile" role="button" tabindex="0" aria-label="Редактировать профиль">
           <div class="account-avatar">У</div>
           <div>
             <strong>Кабинет учителя</strong>
@@ -701,9 +702,9 @@
         </div>
       `;
     }
-    const accountAttrs = user.role === "student" ? ` data-view="profile" role="button" tabindex="0" aria-label="Редактировать профиль"` : "";
+    const accountAttrs = ` data-view="profile" role="button" tabindex="0" aria-label="Редактировать профиль"`;
     return `
-      <div class="sidebar-account ${user.role === "student" ? "sidebar-account-link" : ""}"${accountAttrs}>
+      <div class="sidebar-account sidebar-account-link"${accountAttrs}>
         <div class="account-avatar">${user.avatar ? `<img src="${escapeHtml(user.avatar)}" alt="" />` : `${escapeHtml(user.firstName.slice(0, 1))}${escapeHtml(user.lastName.slice(0, 1))}`}</div>
         <div>
           <strong>${escapeHtml(user.firstName)} ${escapeHtml(user.lastName)}</strong>
@@ -792,7 +793,7 @@
     if (view === "calendar") return renderCalendar();
     if (view === "progress") return renderProgress();
     if (view === "notifications") return renderNotifications();
-    if (view === "profile") return renderStudentProfile();
+    if (view === "profile") return renderProfile();
     if (user.role === "teacher") return renderTeacherDashboard();
     if (user.role === "parent") return renderCalendar();
     return renderStudentDashboard();
@@ -1787,40 +1788,71 @@
     `;
   }
 
-  function renderStudentProfile() {
-    if (user.role !== "student") return renderTeacherDashboard();
+  function renderProfile() {
     const student = currentStudent();
     const initials = `${user.firstName.slice(0, 1)}${user.lastName.slice(0, 1)}`;
+    const canEditProfile = user.role === "student";
+    const title = user.role === "teacher" ? "Профиль аккаунта" : user.role === "parent" ? "Профиль родителя" : "Личный профиль";
+    const editableProfile = canEditProfile ? `
+      <section class="card profile-card">
+        <form id="profile-form" class="profile-form">
+          <div class="profile-avatar-panel">
+            <div class="profile-avatar-preview" data-profile-avatar-preview>
+              ${user.avatar ? `<img src="${escapeHtml(user.avatar)}" alt="" />` : `<span>${escapeHtml(initials)}</span>`}
+            </div>
+            <div>
+              <h3>${escapeHtml(user.firstName)} ${escapeHtml(user.lastName)}</h3>
+              <div class="hint">${escapeHtml(user.email)}</div>
+              <label class="btn secondary avatar-upload">
+                Изменить аватарку
+                <input name="avatarFile" type="file" accept="image/*" />
+              </label>
+            </div>
+            <input type="hidden" name="avatar" value="${escapeHtml(user.avatar || "")}" />
+          </div>
+          <div class="form-grid">
+            <div class="field"><label>Имя</label><input class="input" name="firstName" value="${escapeHtml(user.firstName)}" required /></div>
+            <div class="field"><label>Фамилия</label><input class="input" name="lastName" value="${escapeHtml(user.lastName)}" required /></div>
+            <div class="field"><label>Email</label><input class="input" value="${escapeHtml(user.email)}" disabled /></div>
+            <div class="field"><label>Телефон</label><input class="input" name="phone" value="${escapeHtml(user.phone || "")}" /></div>
+            <div class="field wide"><label>О себе</label><textarea class="textarea" name="bio" placeholder="Например: что нравится в математике, цели, удобное время для занятий...">${escapeHtml(student?.bio || "")}</textarea></div>
+            <button class="btn wide" type="submit">Сохранить профиль</button>
+          </div>
+        </form>
+      </section>
+    ` : `
+      <section class="card profile-card">
+        <div class="profile-avatar-panel">
+          <div class="profile-avatar-preview">
+            ${user.avatar ? `<img src="${escapeHtml(user.avatar)}" alt="" />` : `<span>${escapeHtml(initials || user.email.slice(0, 1))}</span>`}
+          </div>
+          <div>
+            <h3>${escapeHtml(user.role === "teacher" ? "Кабинет учителя" : `${user.firstName} ${user.lastName}`.trim() || "Профиль")}</h3>
+            <div class="hint">${escapeHtml(user.email)}</div>
+          </div>
+        </div>
+      </section>
+    `;
     return `
       <div class="profile-page">
         <div class="toolbar profile-toolbar">
           <div>
-            <h2>Личный профиль</h2>
+            <h2>${title}</h2>
           </div>
         </div>
+        ${editableProfile}
         <section class="card profile-card">
-          <form id="profile-form" class="profile-form">
-            <div class="profile-avatar-panel">
-              <div class="profile-avatar-preview" data-profile-avatar-preview>
-                ${user.avatar ? `<img src="${escapeHtml(user.avatar)}" alt="" />` : `<span>${escapeHtml(initials)}</span>`}
-              </div>
-              <div>
-                <h3>${escapeHtml(user.firstName)} ${escapeHtml(user.lastName)}</h3>
-                <div class="hint">${escapeHtml(user.email)}</div>
-                <label class="btn secondary avatar-upload">
-                  Изменить аватарку
-                  <input name="avatarFile" type="file" accept="image/*" />
-                </label>
-              </div>
-              <input type="hidden" name="avatar" value="${escapeHtml(user.avatar || "")}" />
+          <form id="password-form" class="profile-form">
+            <div>
+              <h3>Смена пароля</h3>
+              <div class="hint">Введите текущий пароль и задайте новый. После смены можно продолжать работать в этом аккаунте.</div>
             </div>
             <div class="form-grid">
-              <div class="field"><label>Имя</label><input class="input" name="firstName" value="${escapeHtml(user.firstName)}" required /></div>
-              <div class="field"><label>Фамилия</label><input class="input" name="lastName" value="${escapeHtml(user.lastName)}" required /></div>
-              <div class="field"><label>Email</label><input class="input" value="${escapeHtml(user.email)}" disabled /></div>
-              <div class="field"><label>Телефон</label><input class="input" name="phone" value="${escapeHtml(user.phone || "")}" /></div>
-              <div class="field wide"><label>О себе</label><textarea class="textarea" name="bio" placeholder="Например: что нравится в математике, цели, удобное время для занятий...">${escapeHtml(student?.bio || "")}</textarea></div>
-              <button class="btn wide" type="submit">Сохранить профиль</button>
+              <div class="field wide"><label>Текущий пароль</label><input class="input" name="currentPassword" type="password" autocomplete="current-password" required /></div>
+              <div class="field"><label>Новый пароль</label><input class="input" name="newPassword" type="password" autocomplete="new-password" minlength="8" required /></div>
+              <div class="field"><label>Повторите новый пароль</label><input class="input" name="confirmPassword" type="password" autocomplete="new-password" minlength="8" required /></div>
+              ${passwordMessage ? `<div class="success-message wide">${escapeHtml(passwordMessage)}</div>` : ""}
+              <button class="btn wide" type="submit">Изменить пароль</button>
             </div>
           </form>
         </section>
@@ -1986,7 +2018,7 @@
         ${field("studentComment", "Комментарий")}
         <div class="field upload-box">
           <label>Фото решения</label>
-          <input class="input" name="attachments" type="file" accept="image/*,.pdf,.doc,.docx,.txt,.zip" capture="environment" multiple />
+          <input class="input" name="attachments" type="file" accept="image/*,.pdf,.doc,.docx,.txt,.zip" multiple />
           <div class="hint">Можно прикрепить фотографии из тетради или файл.</div>
         </div>
         <button class="btn" type="submit">Отправить на проверку</button>
@@ -2284,6 +2316,7 @@
         lessons = [];
         notifications = [];
         profile = null;
+        passwordMessage = "";
         pushState = { status: "idle", message: "" };
         view = "dashboard";
         previewAttachment = null;
@@ -2396,6 +2429,20 @@
         });
       });
     }
+
+    const passwordForm = document.querySelector("#password-form");
+    if (passwordForm) passwordForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const data = Object.fromEntries(new FormData(form));
+      passwordMessage = "";
+      run(async () => {
+        await api("/api/auth/password", { method: "PATCH", body: JSON.stringify(data) });
+        passwordMessage = "Пароль изменён.";
+        form.reset();
+        view = "profile";
+      });
+    });
 
     const assignmentForm = document.querySelector("#assignment-form");
     if (assignmentForm) assignmentForm.addEventListener("submit", (event) => {

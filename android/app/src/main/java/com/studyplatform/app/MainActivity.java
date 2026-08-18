@@ -190,16 +190,16 @@ public class MainActivity extends Activity {
 
         Uri[] results = null;
         if (resultCode == RESULT_OK) {
-            if (data == null || data.getData() == null) {
-                results = new Uri[0];
-            } else if (data.getClipData() != null) {
+            if (data != null && data.getClipData() != null) {
                 int count = data.getClipData().getItemCount();
                 results = new Uri[count];
                 for (int i = 0; i < count; i++) {
                     results[i] = data.getClipData().getItemAt(i).getUri();
                 }
-            } else {
+            } else if (data != null && data.getData() != null) {
                 results = new Uri[]{data.getData()};
+            } else {
+                results = WebChromeClient.FileChooserParams.parseResult(resultCode, data);
             }
         }
         filePathCallback.onReceiveValue(results);
@@ -241,9 +241,10 @@ public class MainActivity extends Activity {
 
             Intent intent = params.createIntent();
             intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+            intent.addCategory(Intent.CATEGORY_OPENABLE);
             intent.setAction(Intent.ACTION_GET_CONTENT);
-            intent.setType("*/*");
-            intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"image/*", "application/pdf"});
+            intent.setType("image/*");
+            intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"image/*", "application/pdf", "text/plain", "application/zip"});
 
             Intent cameraIntent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
             Intent chooser = Intent.createChooser(intent, "Выберите файл");

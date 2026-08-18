@@ -1045,6 +1045,9 @@ class Handler(BaseHTTPRequestHandler):
                     return self.login(conn)
                 if method == "POST" and path == "/api/auth/logout":
                     return self.logout(conn)
+                if method == "PATCH" and path == "/api/auth/password":
+                    user = self.require_user(conn)
+                    return None if user is None else self.update_password(conn, user)
                 if method == "GET" and path == "/api/auth/me":
                     user = self.require_user(conn)
                     return None if user is None else self.send_json({"user": user_payload(user)})
@@ -1124,6 +1127,29 @@ class Handler(BaseHTTPRequestHandler):
         header = self.headers.get("Authorization", "")
         if header.startswith("Bearer "):
             conn.execute("DELETE FROM sessions WHERE token = %s", (header.removeprefix("Bearer ").strip(),))
+        self.send_json({"ok": True})
+
+    def update_password(self, conn, user: dict) -> None:
+        data = self.read_json()
+        current_password = data.get("currentPassword", "")
+        new_password = data.get("newPassword", "")
+        confirm_password = data.get("confirmPassword", "")
+        if not verify_password(current_password, user["password_hash"]):
+            self.send_error_json(HTTPStatus.BAD_REQUEST, "Текущий пароль указан неверно.")
+            return
+        if len(new_password.strip()) < 8:
+            self.send_error_json(HTTPStatus.BAD_REQUEST, "Новый пароль должен быть не короче 8 символов.")
+            return
+        if new_password != confirm_password:
+            self.send_error_json(HTTPStatus.BAD_REQUEST, "Новый пароль и повтор пароля не совпадают.")
+            return
+        if verify_password(new_password, user["password_hash"]):
+            self.send_error_json(HTTPStatus.BAD_REQUEST, "Новый пароль должен отличаться от текущего.")
+            return
+        conn.execute(
+            "UPDATE users SET password_hash = %s, updated_at = %s WHERE id = %s",
+            (hash_password(new_password), now_iso(), user["id"]),
+        )
         self.send_json({"ok": True})
 
     def create_teacher(self, conn, user: dict) -> None:

@@ -726,6 +726,15 @@ p {
   gap: 22px;
 }
 
+.success-message {
+  padding: 12px 14px;
+  border: 1px solid rgba(34, 197, 94, 0.28);
+  border-radius: 8px;
+  color: #166534;
+  background: #ecfdf5;
+  font-weight: 800;
+}
+
 .profile-avatar-panel {
   display: grid;
   grid-template-columns: 104px minmax(0, 1fr);
@@ -3929,6 +3938,12 @@ body[data-theme="dark"] .calendar-view-tabs button.active,
 body[data-theme="dark"] .calendar-filter-btn.active {
   background: #1e2c48;
   color: var(--blue-strong);
+}
+
+body[data-theme="dark"] .success-message {
+  color: #bbf7d0;
+  background: rgba(22, 101, 52, 0.22);
+  border-color: rgba(74, 222, 128, 0.28);
 }
 
 body[data-theme="dark"] .theme-trigger,
